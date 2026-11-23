@@ -1,0 +1,42 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Outfit:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Plus Jakarta Sans", sans-serif;
+
+  --color-teal: #0B7B6B;
+  --color-teal-dark: #095f55;
+  --color-teal-light: #e6f4f2;
+  --color-teal-medium: #b2dcd7;
+  
+  --radius-xl: 12px;
+  --radius-2xl: 18px;
+}
+
+@layer base {
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display);
+  }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0) rotate(-5deg); }
+  50% { transform: translateY(-10px) rotate(5deg); }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes airplane {
+  0% { transform: translate(-100px, 100px) rotate(0deg); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translate(100vw, -100vh) rotate(-15deg); opacity: 0; }
+}
+
+.animate-airplane {
+  animation: airplane 10s linear infinite;
+}
+

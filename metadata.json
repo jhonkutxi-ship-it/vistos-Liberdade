@@ -1,0 +1,8 @@
+{
+  "name": "Vistos Liberdade",
+  "description": "Sistema de gestão da Agência Vistos Liberdade em Viana, Luanda. Assessoria de vistos, bilhética aérea e acompanhamento de processos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

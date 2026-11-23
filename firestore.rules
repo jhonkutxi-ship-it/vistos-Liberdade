@@ -1,0 +1,473 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users
+// Document ID: uid
+// Fields:
+//   - uid: string (required) - Firebase Auth UID
+//   - email: string (required) - User email
+//   - displayName: string (optional) - User display name
+//   - role: string (required) - 'client', 'employee', or 'admin'
+//   - photoURL: string (optional) - User photo URL
+//   - createdAt: timestamp (optional) - User creation time
+//
+// Collection: clients
+// Document ID: uid
+// Fields:
+//   - uid: string (required) - Reference to User entity
+//   - passportNumber: string (optional) - Passport number
+//   - nationality: string (optional) - Nationality
+//   - address: string (optional) - Address
+//   - phone: string (optional) - Phone number
+//   - dateOfBirth: string (optional) - Date of birth
+//
+// Collection: services
+// Document ID: serviceId
+// Fields:
+//   - id: string (required) - Service ID
+//   - name: string (required) - Service name
+//   - price: number (required) - Price in Kz
+//   - description: string (optional) - Service description
+//   - category: string (optional) - 'visa', 'transfer', or 'training'
+//
+// Collection: processes
+// Document ID: processId
+// Fields:
+//   - id: string (required) - Process ID
+//   - clientUid: string (required) - Reference to Client entity
+//   - serviceId: string (required) - Reference to Service entity
+//   - status: string (required) - 'pending', 'in-review', 'approved', or 'rejected'
+//   - progress: number (optional) - Percentage 0-100
+//   - createdAt: timestamp (optional) - Creation time
+//   - updatedAt: timestamp (optional) - Update time
+//
+// Collection: processes/{processId}/documents
+// Document ID: docId
+// Fields:
+//   - id: string (required) - Document ID
+//   - processId: string (required) - Reference to Process entity
+//   - name: string (required) - Document name
+//   - url: string (required) - Document URL
+//   - type: string (optional) - Document type
+//   - status: string (required) - 'uploaded', 'verified', or 'rejected'
+//   - uploadedBy: string (optional) - UID of the uploader
+//   - createdAt: timestamp (optional) - Creation time
+//
+// Collection: messages
+// Document ID: msgId
+// Fields:
+//   - id: string (required) - Message ID
+//   - senderUid: string (required) - Sender UID
+//   - receiverUid: string (required) - Receiver UID
+//   - content: string (required) - Message content
+//   - timestamp: timestamp (required) - Message timestamp
+//   - read: boolean (optional) - Read status
+//
+// Collection: bookings
+// Document ID: bookingId
+// Fields:
+//   - id: string (required) - Booking ID
+//   - clientUid: string (required) - Reference to Client entity
+//   - tier: string (required) - 'standard', 'premium', 'luxury', or 'group'
+//   - date: string (required) - Booking date
+//   - time: string (required) - Booking time
+//   - pickupLocation: string (optional) - Pickup location
+//   - dropoffLocation: string (optional) - Dropoff location
+//   - status: string (required) - 'pending', 'confirmed', 'completed', or 'cancelled'
+//   - price: number (optional) - Booking price
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function hasUserDoc() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isActiveUser() {
+      return !hasUserDoc() || userDoc().get('active', true) != false;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && isActiveUser() && (
+        (hasUserDoc() && userDoc().role == 'admin') ||
+        request.auth.token.email == "jhonkutxi@gmail.com" ||
+        request.auth.token.email == "manpe@vistosliberdade.com" ||
+        request.auth.token.email == "manpe123@vistosliberdade.com"
+      );
+    }
+
+    function isEmployee() {
+      return isAuthenticated() && isActiveUser() && (
+        (hasUserDoc() && userDoc().role == 'employee') ||
+        request.auth.token.email == "manpe@vistosliberdade.com" ||
+        request.auth.token.email == "manpe123@vistosliberdade.com"
+      );
+    }
+
+    function isStaff() {
+      return isAdmin() || isEmployee();
+    }
+
+    function hasPermission(perm) {
+      return isAuthenticated() && isActiveUser() && (
+        isAdmin() ||
+        (hasUserDoc() && 'permissions' in userDoc() && userDoc().permissions is list && perm in userDoc().permissions) ||
+        (
+          hasUserDoc() &&
+          userDoc().role == 'employee' &&
+          !('permissions' in userDoc()) &&
+          exists(/databases/$(database)/documents/settings/permissions) &&
+          perm in get(/databases/$(database)/documents/settings/permissions).data.employee
+        ) ||
+        (
+          hasUserDoc() &&
+          userDoc().role == 'client' &&
+          !('permissions' in userDoc()) &&
+          exists(/databases/$(database)/documents/settings/permissions) &&
+          perm in get(/databases/$(database)/documents/settings/permissions).data.client
+        )
+      );
+    }
+
+    function isValidFinancialTransaction(data) {
+      return data.keys().hasAll(['type', 'amount', 'date', 'description']) &&
+             data.type in ['income', 'expense'];
+    }
+
+    function isValidInvoice(data) {
+      return data.keys().hasAll(['processId', 'clientUid', 'amount', 'status']) &&
+             data.processId is string &&
+             data.clientUid is string;
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'role']) &&
+             data.uid is string &&
+             data.email is string &&
+             data.role in ['client', 'employee', 'admin'];
+    }
+
+    function isValidProcess(data) {
+      return data.keys().hasAll(['clientUid', 'serviceId', 'status', 'paymentType']) &&
+             data.clientUid is string &&
+             data.serviceId is string &&
+             data.status in ['pending', 'in-review', 'approved', 'rejected'] &&
+             data.paymentType in ['full', 'installments'];
+    }
+
+    function isValidDocument(data) {
+      return data.keys().hasAll(['processId', 'url', 'status', 'category']) &&
+             data.processId is string &&
+             data.url is string &&
+             data.status in ['uploaded', 'verified', 'rejected'] &&
+             data.category is string;
+    }
+
+    function isValidDocumentFile(data) {
+      return data.keys().hasAll(['docId', 'processId', 'dataUrl', 'fileName', 'mimeType']) &&
+             data.docId is string &&
+             data.processId is string &&
+             data.dataUrl is string;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidBooking(data) {
+      return data.keys().hasAll(['clientUid', 'tier', 'date', 'time', 'status']) &&
+             data.clientUid is string &&
+             data.tier is string && data.tier.size() > 0 && data.tier.size() <= 80 &&
+             data.status in ['pending', 'confirmed', 'completed', 'cancelled'];
+    }
+
+    function isValidBookingService(data) {
+      return data.keys().hasAll(['id', 'name', 'price', 'category']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() <= 160 &&
+             data.price is number && data.price >= 0 &&
+             data.category in ['transfer', 'flight', 'vip'];
+    }
+
+    function isValidTask(data) {
+      return data.keys().hasAll(['id', 'title', 'status', 'priority', 'dueDate', 'assignedToUid']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 240 &&
+             data.status in ['pending', 'in_progress', 'waiting', 'completed'] &&
+             data.priority in ['low', 'medium', 'high', 'urgent'] &&
+             data.dueDate is string && data.dueDate.size() <= 30 &&
+             data.assignedToUid is string && data.assignedToUid.size() <= 128 &&
+             (!('tags' in data) || (data.tags is list && data.tags.size() <= 20)) &&
+             (!('assigneeUids' in data) || (data.assigneeUids is list && data.assigneeUids.size() <= 20)) &&
+             (!('followerUids' in data) || (data.followerUids is list && data.followerUids.size() <= 20));
+    }
+
+    function isValidTaskAttachment(data) {
+      return data.keys().hasAll(['id', 'taskId', 'fileName', 'mimeType', 'dataUrl']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.taskId is string && data.taskId.size() <= 128 &&
+             data.fileName is string && data.fileName.size() <= 240 &&
+             data.mimeType is string && data.mimeType.size() <= 120 &&
+             data.dataUrl is string;
+    }
+
+    function isValidConsultant(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'role']) &&
+             data.uid is string && data.uid.size() <= 128 &&
+             data.displayName is string && data.displayName.size() <= 160 &&
+             data.role in ['employee', 'admin'];
+    }
+
+    function isValidAdvisoryRequest(data) {
+      return data.keys().hasAll(['clientUid', 'type', 'employeeUid', 'employeeName', 'status']) &&
+             data.clientUid is string && data.clientUid.size() <= 128 &&
+             data.type in ['consultoria', 'assessoria'] &&
+             data.employeeUid is string && data.employeeUid.size() <= 128 &&
+             data.employeeName is string && data.employeeName.size() <= 160 &&
+             data.status in ['pending', 'confirmed', 'completed', 'cancelled'];
+    }
+
+    function isValidServiceReview(data) {
+      return data.keys().hasAll(['processId', 'clientUid', 'employeeUid', 'rating', 'recommend']) &&
+             data.processId is string && data.processId.size() <= 128 &&
+             data.clientUid is string && data.clientUid.size() <= 128 &&
+             data.employeeUid is string && data.employeeUid.size() <= 128 &&
+             data.rating is number && data.rating >= 1 && data.rating <= 5 &&
+             data.recommend is bool;
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['recipientUid', 'type', 'title', 'message', 'read']) &&
+             data.recipientUid is string && data.recipientUid.size() <= 128 &&
+             data.type in ['advisory_request', 'consultancy_booking', 'process_assigned', 'payment_uploaded', 'task_assigned', 'task_overdue', 'system'] &&
+             data.title is string && data.title.size() <= 200 &&
+             data.message is string && data.message.size() <= 1000 &&
+             data.read is bool;
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    match /settings/{settingId} {
+      allow read: if settingId == 'company' || isAuthenticated();
+      allow write: if isAdmin() || hasPermission('manage_settings');
+    }
+
+    match /staff_invites/{inviteEmail} {
+      allow get: if isAuthenticated();
+      allow list: if isStaff();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        isAuthenticated() &&
+        (resource.data.uid == request.auth.uid || request.auth.token.email == inviteEmail) &&
+        request.resource.data.uid == resource.data.uid &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.get('active', true) == resource.data.get('active', true)
+      );
+    }
+
+    match /financial_transactions/{id} {
+      allow read: if isAdmin() || hasPermission('manage_finances') || hasPermission('view_reports');
+      allow write: if isValidFinancialTransaction(request.resource.data) && (isAdmin() || hasPermission('manage_finances') || hasPermission('issue_receipts'));
+      allow delete: if isAdmin() || hasPermission('manage_finances');
+    }
+
+    match /employee_advances/{id} {
+      allow read, write: if isAdmin() || hasPermission('manage_finances');
+    }
+
+    match /invoices/{id} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.clientUid) || isStaff());
+      allow create, update: if isValidInvoice(request.resource.data) && (isStaff() || hasPermission('issue_receipts'));
+      allow delete: if isAdmin() || hasPermission('manage_finances') || hasPermission('issue_receipts');
+    }
+
+    match /users/{uid} {
+      allow read: if isAuthenticated() && (isOwner(uid) || isStaff());
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (
+        isAdmin() ||
+        (isOwner(uid) && request.resource.data.role == 'client')
+      );
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (
+        isAdmin() ||
+        (
+          hasPermission('manage_employees') &&
+          resource.data.role == 'employee' &&
+          request.resource.data.role == 'employee'
+        ) ||
+        (
+          isOwner(uid) &&
+          request.resource.data.uid == resource.data.uid &&
+          request.resource.data.role == resource.data.role &&
+          request.resource.data.get('permissions', []) == resource.data.get('permissions', []) &&
+          request.resource.data.get('active', true) == resource.data.get('active', true)
+        )
+      );
+      allow delete: if isAdmin() || (hasPermission('manage_employees') && resource.data.role == 'employee');
+    }
+
+    match /clients/{uid} {
+      allow read: if isAuthenticated() && (isOwner(uid) || isStaff());
+      allow write: if isAuthenticated() && (isOwner(uid) || isStaff() || hasPermission('manage_clients'));
+    }
+
+    match /services/{serviceId} {
+      allow read: if true;
+      allow write: if isAdmin() || hasPermission('manage_services');
+    }
+
+    match /processes/{processId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.clientUid) || isStaff());
+      allow create: if isAuthenticated() && isValidId(processId) && isValidProcess(request.resource.data) && (
+        isStaff() ||
+        (isOwner(request.resource.data.clientUid) && request.resource.data.status == 'pending' && request.resource.data.get('progress', 0) <= 20)
+      );
+      allow update: if isAuthenticated() && isValidProcess(request.resource.data) && (
+        isStaff() ||
+        (isOwner(resource.data.clientUid) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reviewed', 'rating', 'recommended', 'updatedAt']))
+      );
+      allow delete: if isAdmin() || hasPermission('manage_processes');
+
+      match /documents/{docId} {
+        allow read: if isAuthenticated() && (isOwner(get(/databases/$(database)/documents/processes/$(processId)).data.clientUid) || isStaff());
+        allow create: if isAuthenticated() && isValidDocument(request.resource.data) && (isOwner(get(/databases/$(database)/documents/processes/$(processId)).data.clientUid) || isStaff());
+        allow update: if isAuthenticated() && isValidDocument(request.resource.data) && (isOwner(get(/databases/$(database)/documents/processes/$(processId)).data.clientUid) || isStaff());
+      }
+    }
+
+    match /documents/{docId} {
+      allow read: if isAuthenticated() && (
+        isOwner(resource.data.uploadedBy) ||
+        ('clientUid' in resource.data && isOwner(resource.data.clientUid)) ||
+        isStaff()
+      );
+      allow create: if isAuthenticated() && isValidDocument(request.resource.data) && (
+        isStaff() ||
+        (
+          (isOwner(request.resource.data.uploadedBy) || ('clientUid' in request.resource.data && isOwner(request.resource.data.clientUid))) &&
+          request.resource.data.get('isAgencyIssued', false) == false &&
+          request.resource.data.status == 'uploaded'
+        )
+      );
+      allow update: if isAuthenticated() && isValidDocument(request.resource.data) && (
+        isStaff() ||
+        (isOwner(resource.data.uploadedBy) && resource.data.get('isAgencyIssued', false) == false && resource.data.status != 'verified')
+      );
+      allow delete: if isStaff() || (isOwner(resource.data.uploadedBy) && resource.data.get('isAgencyIssued', false) == false && resource.data.status != 'verified');
+    }
+
+    match /document_files/{docId} {
+      allow read: if isAuthenticated() && (
+        isOwner(resource.data.uploadedBy) ||
+        ('clientUid' in resource.data && isOwner(resource.data.clientUid)) ||
+        isStaff()
+      );
+      allow create: if isAuthenticated() && isValidDocumentFile(request.resource.data) && (
+        isOwner(request.resource.data.uploadedBy) ||
+        ('clientUid' in request.resource.data && isOwner(request.resource.data.clientUid)) ||
+        isStaff()
+      );
+      allow update: if isStaff() || isOwner(resource.data.uploadedBy);
+      allow delete: if isStaff() || isOwner(resource.data.uploadedBy);
+    }
+
+    match /messages/{msgId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.senderUid) || isOwner(resource.data.receiverUid) || isStaff());
+      allow create: if isAuthenticated() && (isOwner(request.resource.data.senderUid) || isStaff());
+    }
+
+    match /bookings/{bookingId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.clientUid) || isStaff());
+      allow create: if isAuthenticated() && isValidBooking(request.resource.data) && (isOwner(request.resource.data.clientUid) || isStaff());
+      allow update: if isAuthenticated() && isValidBooking(request.resource.data) && (isOwner(resource.data.clientUid) || isStaff());
+      allow delete: if isStaff();
+    }
+
+    match /booking_services/{serviceId} {
+      allow read: if isAuthenticated();
+      allow write: if isStaff() && isValidBookingService(request.resource.data);
+      allow delete: if isStaff();
+    }
+
+    match /hr_documents/{docId} {
+      allow read: if isAdmin() || hasPermission('manage_employees') || isOwner(resource.data.employeeUid);
+      allow create, update, delete: if isAdmin() || hasPermission('manage_employees');
+    }
+
+    match /employee_payslips/{id} {
+      allow read: if isAdmin() || hasPermission('manage_employees') || hasPermission('manage_finances') || isOwner(resource.data.employeeUid);
+      allow create, update, delete: if isAdmin() || hasPermission('manage_employees') || hasPermission('manage_finances');
+    }
+
+    match /tasks/{taskId} {
+      allow read: if isStaff();
+      allow create, update: if isStaff() && isValidId(taskId) && isValidTask(request.resource.data);
+      allow delete: if isAdmin() || hasPermission('manage_tasks') || resource.data.createdByUid == request.auth.uid;
+    }
+
+    match /task_attachments/{attId} {
+      allow read: if isStaff();
+      allow create, update: if isStaff() && isValidId(attId) && isValidTaskAttachment(request.resource.data);
+      allow delete: if isStaff();
+    }
+
+    match /consultants/{uid} {
+      allow read: if isAuthenticated();
+      allow create, update: if isStaff() && isValidId(uid) && isValidConsultant(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /advisory_requests/{reqId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.clientUid) || isStaff());
+      allow create: if isAuthenticated() && isValidId(reqId) && isValidAdvisoryRequest(request.resource.data) && (isOwner(request.resource.data.clientUid) || isStaff());
+      allow update: if isAuthenticated() && isValidId(reqId) && isValidAdvisoryRequest(request.resource.data) && (
+        isStaff() ||
+        (isOwner(resource.data.clientUid) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'preferredDate', 'preferredTime', 'notes']))
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /service_reviews/{reviewId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidId(reviewId) && isValidServiceReview(request.resource.data) && isOwner(request.resource.data.clientUid);
+      allow update: if isAdmin() && isValidServiceReview(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /notifications/{notifId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.recipientUid) || isStaff());
+      allow create: if isAuthenticated() && isValidId(notifId) && isValidNotification(request.resource.data) && (
+        !('senderUid' in request.resource.data) ||
+        request.resource.data.senderUid == '' ||
+        isOwner(request.resource.data.senderUid) ||
+        isStaff()
+      );
+      allow update: if isAuthenticated() && isValidNotification(request.resource.data) && (
+        isStaff() ||
+        (isOwner(resource.data.recipientUid) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']))
+      );
+      allow delete: if isAdmin() || isOwner(resource.data.recipientUid);
+    }
+  }
+}
